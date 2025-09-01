@@ -1,165 +1,81 @@
+import os
+import requests
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
 from openai import OpenAI
-import os
 from dotenv import load_dotenv
 
-# Initialize Flask app
+# Load environment vars
+load_dotenv()
+
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "supersecretkey123")
 
-# Load OpenAI API key
-load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-# Global variables
-assistant = None
-thread = None
-interview_type = None
-candidate_years_of_experience = None
-job_important_skills = None
-job_level = None
-
-global ids_list, questions_asked
-ids_list = []
-questions_asked = []
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 
-def take_interview(question_count, response):
-    """
-    Generates the next interview question dynamically based on the candidate's previous response.
-    """
-    global job_level, candidate_years_of_experience, job_important_skills
-
-    flag = False
-    skills_text = ""
-
-    thread_id = session.get('thread_id')
-    assistant_id = session.get('assistant_id')
-
-    if not thread_id or not assistant_id:
-        raise Exception(
-            "Thread or assistant not initialized. Please restart the interview setup.")
-
-    if isinstance(job_important_skills, list):
-        skills_text = ', '.join(job_important_skills)
-    else:
-        skills_text = "Not provided"
-
-    while not flag:
-        # Initial easy question for the first round
-        first_question = (
-            f"Start the interview by asking an easy question suitable for a {job_level} {interview_type} "
-            f"with {candidate_years_of_experience} years of experience. Focus on foundational {interview_type} concepts"
-        )
-        # Tailored question based on candidate response
-        question = (
-            f"""Based on the candidate's last response: "{response}", adjust the difficulty as needed, making them 
-            easier if the candidate answers badly, and increasing difficulty if they answer well. 
-            - Aim to gauge knowledge in key skills: {skills_text}.
-            - Tailor the question to their experience level ({candidate_years_of_experience} years) and job level ({job_level}).
-            Only return the question."""
-        )
-
-        # Select the first or follow-up question
-        if question_count == 0:
-            content = first_question
-        else:
-            content = question
-
-        # Send the message to OpenAI assistant
-        message = client.beta.threads.messages.create(
-            thread_id=thread_id,
-            role="user",
-            content=content
-        )
-
-        # Run the assistant
-        run = client.beta.threads.runs.create(
-            thread_id=thread_id,
-            assistant_id=assistant_id
-        )
-
-        # Fetch the assistant's response
-        run = client.beta.threads.runs.retrieve(
-            thread_id=thread_id, run_id=run.id)
-        messages = client.beta.threads.messages.list(thread_id=thread_id)
-
-        for i in messages.data:
-            if i.assistant_id is not None and len(i.content) != 0:
-                questions_asked.append(i.content[0].text.value)
-                question_count += 1
-                flag = True
-                break
-
-    return questions_asked[-1]
-
-
-@app.route('/')
+@app.route("/")
 def index():
-    """Renders the initial screen for interview setup."""
-    return render_template('index.html')
+    """Landing page for interview setup."""
+    return render_template("index.html")
 
 
-@app.route('/submit_role', methods=['POST'])
+@app.route("/submit_role", methods=["POST"])
 def submit_role():
     """
-    Handles form submission, initializes OpenAI assistant with role and parameters,
-    and redirects to the interview page.
+    Saves job details from the form into session and redirects to /interview.
     """
-    global assistant, thread, interview_type
-    global candidate_years_of_experience, job_important_skills, job_level
+    session["interview_role"] = request.form.get("interview_role")
+    session["candidate_years_of_experience"] = request.form.get(
+        "candidate_years_of_experience")
+    session["job_important_skills"] = request.form.get("job_important_skills")
+    session["job_level"] = request.form.get("job_level")
 
-    # Retrieve the form data
-    interview_type = request.form['interview_role']
-    candidate_years_of_experience = request.form['candidate_years_of_experience']
-    job_important_skills = [skill.strip(
-    ) for skill in request.form['job_important_skills'].split(",") if skill.strip()]
-    job_level = request.form['job_level']
+    return redirect(url_for("interview"))
 
-    # Initialize assistant and thread with new parameters
-    assistant = client.beta.assistants.create(
-        name=f"{interview_type} Interviewer",
-        instructions=f"""You are a {interview_type} Interviewer. Take technical interviews by asking one question 
-        at a time, adjusting question difficulty based on the candidate's responses, years of experience, job level, 
-        and job description (JD) skills required. 
-        Consider these parameters:
-        - Years of experience: {candidate_years_of_experience}
-        - Required skills from the JD: {', '.join(job_important_skills)}
-        - Job level: {job_level}
 
-        Start with foundational {interview_type} questions and adapt based on responses, moving to more advanced 
-        topics related to JD skills and level if the candidate shows proficiency. Only return the question, nothing else.""",
-        model="gpt-4o-mini"
+@app.route("/interview")
+def interview():
+    """Interview page with voice + text UI."""
+    return render_template("interview.html")
+
+
+@app.route("/session")
+def create_realtime_session():
+    """
+    Creates an ephemeral Realtime session with OpenAI.
+    The browser will call this to get a short-lived token.
+    """
+    # Build a system prompt using values saved in session
+    role = session.get("interview_role", "Software Engineer")
+    years = session.get("candidate_years_of_experience", "0")
+    skills = session.get("job_important_skills", "")
+    level = session.get("job_level", "Junior")
+
+    system_prompt = (
+        f"You are an AI interviewer for a {role} position. "
+        f"Interview a {level} candidate with {years} years of experience. "
+        f"Focus on skills: {skills}. "
+        "Ask one question at a time, adjusting difficulty based on their answers."
     )
 
-    # Create a thread and store the thread.id in session
-    thread = client.beta.threads.create()
-    session['thread_id'] = thread.id  # Save thread_id in session
-    session['assistant_id'] = assistant.id  # Save assistant_id in session
-
-    # Redirect to the interview page
-    return redirect(url_for('interview'))
-
-
-@app.route('/interview')
-def interview():
-    """Renders the interview page."""
-    return render_template('interview.html')
-
-
-@app.route('/get_next_question', methods=['POST'])
-def get_next_question():
-    data = request.json
-    question_count = data.get("question_count", 0)
-    response = data.get("response", "")
-
-    # Call the take_interview function
-    try:
-        next_question = take_interview(question_count, response)
-        return jsonify({"question": next_question})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    r = requests.post(
+        "https://api.openai.com/v1/realtime/sessions",
+        headers={
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": "gpt-realtime",
+            "voice": "shimmer",
+            "modalities": ["audio", "text"],
+            "instructions": system_prompt,  # inject job details into prompt
+        },
+        timeout=10,
+    )
+    r.raise_for_status()
+    return jsonify(r.json())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     app.run(debug=True)
