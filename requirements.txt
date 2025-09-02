@@ -5,3 +5,4 @@ python-dotenv==1.0.1
 requests==2.32.3
 prometheus-client==0.20.0
 openai==1.58.1
+urllib3<2
