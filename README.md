@@ -2,7 +2,7 @@
 
 ## 🌐 Live Demo
 
-[Click here to access the AI Interviewer](http://ai-interviewer-general.sorsx.com/)
+[Click here to access the AI Interviewer](https://ai-interviewer-general-bef2faaaa006.herokuapp.com/)
 
 _(Note: Since this app is deployed using Heroku Eco Dynos, it may go into sleep mode when unused. **The first question might give an error while fetching. Simply refresh the screen once**, and it should function fine afterwards.)_
 
